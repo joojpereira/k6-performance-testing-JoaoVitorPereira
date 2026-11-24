@@ -1,22 +1,30 @@
 import { htmlReport } from 'https://raw.githubusercontent.com/benc-uk/k6-reporter/latest/dist/bundle.js';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import http from 'k6/http';
-import { check } from 'k6';
+import { check, sleep } from 'k6';
 import { Trend, Rate } from 'k6/metrics';
 
-export const getContactsDuration = new Trend('get_contacts', true);
+export const getDuration = new Trend('get_duration', true);
 export const RateContentOK = new Rate('content_OK');
 
 export const options = {
-  thresholds: {
-    http_req_failed: ['rate<0.30'],
-    get_contacts: ['p(99)<500'],
-    content_OK: ['rate>0.95']
+  scenarios: {
+    rampa: {
+      executor: 'ramping-vus',
+      startVUs: 7,
+      stages: [
+        { duration: '1m', target: 45 }, // 7 -> 45 VUs
+        { duration: '1m30s', target: 92 }, // 45 -> 92 VUs
+        { duration: '1m', target: 92 } // mantém o pico
+      ], // total: 3m30s
+      gracefulRampDown: '30s'
+    }
   },
-  stages: [
-    { duration: '5s', target: 2 },
-    { duration: '5s', target: 6 }
-  ]
+  thresholds: {
+    http_req_duration: ['p(90)<6800'], // 90% das respostas abaixo de 6800ms
+    http_req_failed: ['rate<0.25'], // menos de 25% de erro
+    content_OK: ['rate>0.75'] // pelo menos 75% de respostas 200
+  }
 };
 
 export function handleSummary(data) {
@@ -27,23 +35,16 @@ export function handleSummary(data) {
 }
 
 export default function () {
-  const baseUrl = 'https://test.k6.io/';
+  const baseUrl = __ENV.BASE_URL || 'https://dummyjson.com/products';
 
-  const params = {
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  };
+  const res = http.get(baseUrl);
 
-  const OK = 200;
-
-  const res = http.get(`${baseUrl}`, params);
-
-  getContactsDuration.add(res.timings.duration);
-
-  RateContentOK.add(res.status === OK);
+  getDuration.add(res.timings.duration);
+  RateContentOK.add(res.status === 200);
 
   check(res, {
-    'GET Contacts - Status 200': () => res.status === OK
+    'GET - Status 200': r => r.status === 200
   });
+
+  sleep(1);
 }
